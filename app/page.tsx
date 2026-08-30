@@ -3,333 +3,74 @@
 import { useEffect, useMemo, useState } from 'react';
 
 type Tab = 'home' | 'manual' | 'playbooks' | 'monitor' | 'interview' | 'study';
+type ConfirmState = 'assumed' | 'confirmed' | 'not-yet-tracked';
+type MoneyKey =
+  | 'authorizedHours'
+  | 'utilization'
+  | 'reimbursement'
+  | 'loadedRbtCost'
+  | 'bcbaCost'
+  | 'bcbaCount'
+  | 'fixedOverhead'
+  | 'rbtBudgeted'
+  | 'rbtActual';
+
+type MoneyField = {
+  label: string;
+  value: number;
+  state: 'assumed' | 'confirmed';
+  unit: string;
+};
+
+type MonitorGauge = {
+  id: string;
+  machine: 'Service Delivery' | 'People' | 'Execution' | 'Money' | 'Safety';
+  label: string;
+  current: string;
+  target: string;
+  source: string;
+  state: ConfirmState;
+};
+
 type Responsibility = {
   title: string;
   plain: string;
   success: string;
   systems: string[];
   watch: string[];
-  routine: string;
-  break: string;
   authority: 'Own' | 'Collaborate' | 'Escalate' | 'Mixed';
   interview: string;
 };
 
-type QuizQ = {
+type Playbook = {
   id: string;
-  topic: string;
+  title: string;
+  trigger: string;
+  objective: string;
+  steps: string[];
+  escalateIf: string[];
+  window: 'Immediately' | 'Same day' | 'Weekly report' | 'Not at all';
+  scenario: string;
+  choices: string[];
+  correct: number;
+  reasoning: string;
+};
+
+type InterviewQuestion = {
+  id: string;
   question: string;
-  options: string[];
-  correctIndex: number;
-  rationale: string;
+  testing: string;
+  failure: string;
+  note?: string;
+  askInterviewer?: boolean;
 };
 
-type Miss = { question: string; chosen: string; correct: string; topic: string };
-
-type AiPack = {
-  focus: string;
-  flashcards: { front: string; back: string; topic: string }[];
-  quiz: { question: string; options: string[]; correctIndex: number; rationale: string; topic: string }[];
+type CoachOutput = {
+  pushback: string;
+  unsupportedAssumption: string;
+  missingNumber: string;
+  methodChallenge: string;
 };
-
-const responsibilities: Responsibility[] = [
-  {
-    title: 'Day-to-day clinic leadership',
-    plain: 'Keep the clinic operating reliably each day: staffing, priorities, communication, follow-through, and rapid response when normal operations break.',
-    success: 'The clinic is staffed, decisions are made on time, urgent problems are contained, and work does not stall waiting for direction.',
-    systems: ['Teams Shifts', 'ABA Connect', 'Daily huddle', 'Escalation channels'],
-    watch: ['Coverage gaps', 'Callouts', 'Missed services', 'Operational blockers'],
-    routine: 'Review the day, identify risks, assign ownership, remove blockers, and follow up.',
-    break: 'Open the relevant playbook: callout, coverage gap, safety issue, documentation issue, or family concern.',
-    authority: 'Mixed',
-    interview: 'Describe how you prioritize service continuity, people, safety, and communication without trying to personally do every task.',
-  },
-  {
-    title: 'Build sustainable operations',
-    plain: 'Create repeatable ways of working so the clinic is not dependent on one person remembering everything.',
-    success: 'Routine work has owners, clear steps, deadlines, visible status, and a way to detect drift.',
-    systems: ['Playbooks', 'Checklists', 'Trackers', 'Ownership map'],
-    watch: ['Repeat emergencies', 'Dropped handoffs', 'Workarounds', 'Single points of failure'],
-    routine: 'Standardize recurring work and clarify who owns each step.',
-    break: 'If a process repeatedly misses target and the cause is unclear, define the measurable gap and investigate it systematically.',
-    authority: 'Own',
-    interview: 'Explain that sustainable operations means building systems people can execute consistently, not relying on heroics.',
-  },
-  {
-    title: 'Growth strategies and processes',
-    plain: 'Help the clinic expand capacity without creating operational chaos.',
-    success: 'Growth in clients, staff, rooms, and service hours is matched by scheduling, onboarding, training, and support capacity.',
-    systems: ['Capacity planning', 'Hiring pipeline', 'Onboarding', 'Room/schedule planning'],
-    watch: ['Open demand', 'Vacancies', 'Staff readiness', 'Space constraints'],
-    routine: 'Compare demand with staffing and operational capacity before growth creates bottlenecks.',
-    break: 'Identify the limiting constraint and coordinate the correct owner rather than pushing every part of the system harder.',
-    authority: 'Collaborate',
-    interview: 'Show that growth is not just more clients; it is matching demand to safe, trained, sustainable capacity.',
-  },
-  {
-    title: 'Lead a high-performance operations team',
-    plain: 'Set expectations, develop people, address missed expectations, and create accountability without confusing management with punishment.',
-    success: 'Employees know what good performance looks like, receive feedback, have needed training, and patterns are addressed promptly.',
-    systems: ['Performance reviews', 'Coaching workflow', 'Training tracker', 'Follow-up dates'],
-    watch: ['Repeat misses', 'Attendance patterns', 'Training gaps', 'Feedback themes'],
-    routine: 'Recognize strong performance, coach gaps, set clear next expectations, and reassess.',
-    break: 'Use the performance-management logic tree before deciding whether the issue is training, clarity, barrier, fit, or accountability.',
-    authority: 'Mixed',
-    interview: 'Be specific about evidence, expectations, coaching, follow-up, and when HR or clinical leadership must be involved.',
-  },
-  {
-    title: 'Client and stakeholder communication',
-    plain: 'Make sure families, referral sources, and internal partners receive timely operational communication and know who owns next steps.',
-    success: 'Concerns do not disappear into a void; communication is prompt, professional, documented where required, and routed correctly.',
-    systems: ['Contact ownership', 'Follow-up tracker', 'Escalation path'],
-    watch: ['Open concerns', 'Unreturned follow-ups', 'Recurring complaints'],
-    routine: 'Acknowledge, clarify the operational need, assign the right owner, and close the loop.',
-    break: 'Separate operational concerns from clinical questions and involve clinical leadership when treatment judgment is required.',
-    authority: 'Collaborate',
-    interview: 'Emphasize responsiveness while respecting the boundary between operational communication and clinical recommendations.',
-  },
-  {
-    title: 'Training of subordinates',
-    plain: 'Ensure required training is assigned, completed, understood, and followed up when performance shows a gap.',
-    success: 'Required training is current and employees can perform the expected operational tasks.',
-    systems: ['Training matrix', 'Due-date tracker', 'Competency follow-up'],
-    watch: ['Overdue training', 'Expirations', 'Repeat errors after training'],
-    routine: 'Track requirements, completion, due dates, and remediation.',
-    break: 'If training was completed but performance still fails, move into the performance workflow rather than repeatedly assigning the same training.',
-    authority: 'Own',
-    interview: 'Distinguish training completion from actual performance and explain how you would verify both.',
-  },
-  {
-    title: 'Timely documentation',
-    plain: 'Ensure required documentation is completed within company expectations and operational delays are identified quickly.',
-    success: 'Documentation is completed on time and repeat late patterns are visible and addressed.',
-    systems: ['ABA Connect', 'Timeliness report', 'Follow-up workflow'],
-    watch: ['On-time percentage', 'Overdue items', 'Repeat patterns by time/day/workflow'],
-    routine: 'Monitor completion, follow up on misses, and clarify expectations.',
-    break: 'One late note gets normal follow-up. A center-wide decline may become a measurable process problem requiring deeper investigation.',
-    authority: 'Mixed',
-    interview: 'Own timeliness operationally while recognizing that clinical documentation quality belongs with qualified clinical oversight.',
-  },
-  {
-    title: 'Compliance and quality assurance',
-    plain: 'Make sure operational practices follow required company, licensing, accreditation, and quality standards.',
-    success: 'Requirements are known, assigned, documented, and exceptions are escalated rather than improvised.',
-    systems: ['Audit checklist', 'Policy library', 'Corrective-action tracker'],
-    watch: ['Audit findings', 'Expired requirements', 'Repeat exceptions'],
-    routine: 'Review requirements, maintain evidence, correct gaps, and coordinate leadership support.',
-    break: 'Contain risk, preserve facts, and escalate when an issue exceeds operational authority.',
-    authority: 'Escalate',
-    interview: 'Do not pretend to be the legal/compliance expert; show disciplined adherence, documentation, and escalation.',
-  },
-  {
-    title: 'Financial oversight and budgets',
-    plain: 'Understand what the clinic is spending, whether departments are within budget, and what operational decisions are driving labor and other costs.',
-    success: 'Expenses are visible, exceptions are understood, approvals are disciplined, and service capacity is not managed blindly.',
-    systems: ['Budget report', 'Expense approvals', 'Labor/OT report', 'Variance review'],
-    watch: ['Actual vs budget', 'Overtime', 'Administrative labor', 'Unexpected expenses'],
-    routine: 'Review budget-to-actual, ask why meaningful variances exist, and coordinate corrective action.',
-    break: 'Do not cut blindly. Determine whether excess cost reflects vacancies, callout coverage, scheduling, demand, training, or another driver.',
-    authority: 'Mixed',
-    interview: 'If experience is limited, say so, then explain the core discipline: compare actual to plan, understand drivers, make controlled decisions, and escalate exceptions.',
-  },
-  {
-    title: 'Employee and client safety',
-    plain: 'Maintain an environment where foreseeable operational risks are identified and urgent safety events trigger the correct response.',
-    success: 'Immediate safety takes priority, staff know escalation paths, and incidents are handled according to policy.',
-    systems: ['Safety checks', 'Incident workflow', 'Emergency contacts', 'Facility checks'],
-    watch: ['Incidents', 'Hazards', 'Repeat safety themes'],
-    routine: 'Inspect, correct routine hazards, reinforce procedures, and keep escalation paths clear.',
-    break: 'Stabilize immediate safety first, then notify and document through the required channels.',
-    authority: 'Mixed',
-    interview: 'Lead with immediate safety and policy, then coordination; do not freelance clinical crisis procedures.',
-  },
-  {
-    title: 'Facility tours and readiness',
-    plain: 'Keep the physical clinic presentable, functional, safe, and ready for clients, families, staff, and visitors.',
-    success: 'The facility is orderly, issues are visible, and repairs or readiness gaps have owners.',
-    systems: ['Walkthrough checklist', 'Facilities ticketing', 'Readiness log'],
-    watch: ['Open repairs', 'Safety hazards', 'Room readiness'],
-    routine: 'Walk the facility, capture issues, assign ownership, and follow up.',
-    break: 'Prioritize by safety and service impact, not by which problem is most annoying.',
-    authority: 'Own',
-    interview: 'Frame tours as operational observation, relationship building, and issue detection rather than ceremonial walkthroughs.',
-  },
-  {
-    title: 'Weekly, monthly, and quarterly reporting',
-    plain: 'Turn operational activity into a reliable picture leadership can use to make decisions.',
-    success: 'Reports are accurate, on time, and explain meaningful changes rather than merely listing numbers.',
-    systems: ['Reporting calendar', 'Dashboard', 'Variance notes'],
-    watch: ['Service delivery', 'Staffing', 'Documentation', 'Budget', 'Quality/safety indicators'],
-    routine: 'Collect, validate, summarize, explain variance, and identify actions/owners.',
-    break: 'If data conflict across systems, verify the source before drawing a conclusion.',
-    authority: 'Own',
-    interview: 'Explain the difference between reporting a metric and interpreting what it means operationally.',
-  },
-  {
-    title: 'Crisis intervention with clinical team',
-    plain: 'Support safe operations during crises while qualified clinical leaders direct clinical intervention.',
-    success: 'Roles are clear, the environment is supported, communication happens quickly, and operational needs do not interfere with clinical safety.',
-    systems: ['Crisis protocol', 'Escalation contacts', 'Staffing support'],
-    watch: ['Incident frequency', 'Staff readiness', 'Operational barriers during crises'],
-    routine: 'Maintain readiness and role clarity.',
-    break: 'Follow crisis policy and clinical direction; support staffing, space, communication, and escalation.',
-    authority: 'Collaborate',
-    interview: 'State the scope boundary clearly: operations supports the response; clinical leaders own clinical judgment.',
-  },
-  {
-    title: 'Medication policy adherence',
-    plain: 'Ensure operational handling follows defined medication procedures and deviations are escalated.',
-    success: 'Staff follow policy exactly and questions are routed to the appropriate qualified leader.',
-    systems: ['Medication policy', 'Training records', 'Exception reporting'],
-    watch: ['Policy deviations', 'Training gaps'],
-    routine: 'Confirm required process and training are followed.',
-    break: 'Do not improvise medication decisions; secure the situation and escalate according to policy.',
-    authority: 'Escalate',
-    interview: 'Show policy discipline and scope awareness, not medical decision-making.',
-  },
-  {
-    title: 'Mitigate missed services',
-    plain: 'Reduce preventable loss of planned client service by responding to callouts, cancellations, vacancies, and schedule gaps quickly and intelligently.',
-    success: 'At-risk sessions are identified early, qualified coverage is used when appropriate, and recurring loss patterns become visible.',
-    systems: ['Teams Shifts', 'ABA Connect', 'Coverage Board', 'Callout playbook'],
-    watch: ['Scheduled vs rendered hours', 'Callouts', 'Client cancellations', 'Coverage gaps', 'Vacancies'],
-    routine: 'Compare planned staffing/service with actual delivery and resolve immediate gaps.',
-    break: 'Contain today first; if missed services become a recurring measurable pattern with unclear causes, investigate the process rather than guessing.',
-    authority: 'Mixed',
-    interview: 'Walk through the 7:10 AM callout logic: identify services at risk, find appropriate coverage, avoid creating a second gap, communicate, update systems, then verify delivery.',
-  },
-];
-
-const quizBank: QuizQ[] = [
-  {
-    id: 'q1', topic: 'playbooks',
-    question: 'At 7:10 AM an RBT calls out for an 8:30 AM session. What is the strongest first operational move?',
-    options: ['Begin a DMAIC project on attendance', 'Identify the affected session and service risk, then open the coverage process', 'Immediately discipline the RBT', 'Wait to see whether the family cancels'],
-    correctIndex: 1,
-    rationale: 'The immediate responsibility is containment: identify what service is at risk and activate the known coverage process. Trend investigation can happen later if callouts are recurring.',
-  },
-  {
-    id: 'q2', topic: 'authority',
-    question: 'A potential replacement RBT is available, but there is a client-specific clinical concern about the pairing. What should the DOO do?',
-    options: ['Make the clinical judgment because staffing is operations', 'Ask the family to decide', 'Coordinate with the appropriate clinical leader before finalizing the pairing', 'Cancel automatically without checking alternatives'],
-    correctIndex: 2,
-    rationale: 'Operations can coordinate staffing, but clinical appropriateness belongs with qualified clinical leadership.',
-  },
-  {
-    id: 'q3', topic: 'monitoring',
-    question: 'Which example best represents monitoring rather than problem-solving?',
-    options: ['Reviewing scheduled versus rendered hours each week for drift', 'Coaching an employee after a documented performance miss', 'Replacing an absent RBT this morning', 'Investigating a sustained decline in documentation timeliness'],
-    correctIndex: 0,
-    rationale: 'Monitoring is the gauge function: watching an indicator so drift is noticed before or when it becomes a problem.',
-  },
-  {
-    id: 'q4', topic: 'performance',
-    question: 'One employee repeatedly misses an established operational expectation. What should happen before assuming the employee is lazy or a poor fit?',
-    options: ['Verify the expectation, evidence, training, ability, and possible barriers', 'Move directly to termination', 'Launch a center-wide process redesign', 'Ignore it until the annual review'],
-    correctIndex: 0,
-    rationale: 'Individual performance management begins by defining the miss and checking clarity, training, ability, barriers, and evidence before selecting coaching or accountability.',
-  },
-  {
-    id: 'q5', topic: 'finance',
-    question: 'Overtime is above budget for the month. What is the best director-level response?',
-    options: ['Ban all overtime immediately', 'Accept it because healthcare is expensive', 'Compare actual to plan and determine the operational drivers before choosing an action', 'Reduce client service hours until payroll falls'],
-    correctIndex: 2,
-    rationale: 'Budget variance is a signal. The DOO should understand whether vacancies, callout coverage, scheduling, demand, or another driver explains it before acting.',
-  },
-  {
-    id: 'q6', topic: 'documentation',
-    question: 'Documentation timeliness drops from a stable high level to a sustained low level across the center. What changes about your response?',
-    options: ['Nothing; treat every late note as unrelated', 'The recurring measurable gap may justify a process-level investigation after immediate follow-up', 'Clinical documentation should be ignored by operations', 'Replace the entire staff immediately'],
-    correctIndex: 1,
-    rationale: 'A widespread sustained decline is different from one late item. It may indicate a process/output problem that needs systematic investigation.',
-  },
-  {
-    id: 'q7', topic: 'service delivery',
-    question: 'Teams Shifts shows what should happen while ABA Connect shows what actually happened. What comparison is especially useful to a DOO?',
-    options: ['Planned staffing/service versus actual rendered service', 'Employee birthdays versus client ages', 'Parking spaces versus documentation count', 'Job titles versus office supplies'],
-    correctIndex: 0,
-    rationale: 'A core operations question is whether planned capacity became delivered service and, if not, where the gap occurred.',
-  },
-  {
-    id: 'q8', topic: 'systems',
-    question: 'Which problem most clearly calls for a checklist/workflow rather than DMAIC?',
-    options: ['A required onboarding sequence must happen the same way for every new employee', 'Callout rate doubled for eight weeks and the cause is unknown', 'Missed services are rising with no obvious driver', 'Overtime rose sharply despite stable demand'],
-    correctIndex: 0,
-    rationale: 'Known repeatable required work should be standardized as a workflow/checklist. DMAIC is for meaningful measurable performance gaps with unclear causes.',
-  },
-  {
-    id: 'q9', topic: 'leadership',
-    question: 'Which statement best reflects director-level leadership?',
-    options: ['I personally solve every problem so staff know I care', 'I make sure the right owner, standard, information, decision, and follow-up are in place', 'I avoid delegating anything important', 'I focus only on problems that appear on dashboards'],
-    correctIndex: 1,
-    rationale: 'A director builds reliable execution through ownership, standards, decisions, support, and follow-up rather than becoming the bottleneck.',
-  },
-  {
-    id: 'q10', topic: 'safety',
-    question: 'During an urgent safety event, what takes priority before longer-term process analysis?',
-    options: ['Immediate safety and required escalation', 'Budget analysis', 'A quarterly report', 'A root-cause workshop'],
-    correctIndex: 0,
-    rationale: 'Immediate safety and stabilization come first. Analysis and improvement follow after the urgent situation is contained.',
-  },
-  {
-    id: 'q11', topic: 'experience gap',
-    question: 'If asked about limited budgeting experience, which answer strategy is strongest?',
-    options: ['Pretend you have managed a clinic P&L', 'Say finances are not important because care comes first', 'Acknowledge the gap, then explain budget-to-actual, variance drivers, disciplined approvals, and willingness to learn the company process', 'Change the subject to clinical skills'],
-    correctIndex: 2,
-    rationale: 'Credibility comes from naming the experience gap without surrendering the underlying operational understanding or learning plan.',
-  },
-  {
-    id: 'q12', topic: 'missed services',
-    question: 'When reassigning an RBT to cover a callout, which check prevents solving one problem by creating another?',
-    options: ['Whether the replacement likes the new room', 'Whether moving the RBT uncovers another client/session', 'Whether the replacement has the newest badge', 'Whether the absent employee has used PTO before'],
-    correctIndex: 1,
-    rationale: 'Coverage decisions must account for downstream displacement; moving one person can simply transfer the service gap elsewhere.',
-  },
-];
-
-const baseFlashcards = [
-  { topic: 'systems', front: 'When do I use a playbook?', back: 'When a recurring event happens and the immediate response is already known: callout, safety event, timesheet error, cancellation, etc.' },
-  { topic: 'systems', front: 'When do I use a workflow/checklist?', back: 'When required work must be completed consistently: onboarding, training completion, documentation follow-up, audits, reporting.' },
-  { topic: 'monitoring', front: 'What does a dashboard do for a DOO?', back: 'It acts like gauges: it shows whether staffing, service delivery, documentation, budget, and other systems are staying within expectations.' },
-  { topic: 'dmaic', front: 'When does DMAIC enter the picture?', back: 'When there is a meaningful measurable process/output gap, the important causes are not yet known, and immediate containment has already been handled if needed.' },
-  { topic: 'authority', front: 'What are the three authority buckets?', back: 'Own operational decisions; collaborate where another discipline such as clinical judgment is involved; escalate HR, compliance, high-risk, or out-of-scope issues.' },
-  { topic: 'service delivery', front: 'Teams Shifts vs ABA Connect?', back: 'Shifts = planned people/schedule. ABA Connect = what happened with services and operational outcomes. The DOO compares plan to actual.' },
-  { topic: 'performance', front: 'What comes before calling someone lazy?', back: 'Define the missed expectation, verify evidence, confirm clarity and training, assess ability/barriers, then select coaching, support, accountability, or escalation.' },
-  { topic: 'finance', front: 'What is budget variance?', back: 'The difference between what was planned/budgeted and what was actually spent. The DOO asks what operational drivers caused a meaningful variance.' },
-];
-
-const interviewQuestions = [
-  {
-    q: 'You have not been a Director of Operations before. Why should we take the risk on you?',
-    framework: 'Do not argue that experience does not matter. Acknowledge the gap, show that you understand the role, connect your frontline insight to operational thinking, and explain how you will use structure, data, collaboration, and escalation instead of pretending to know everything.',
-    sample: 'I would not claim that my current experience is equivalent to someone who has already run a clinic. The case I would make is that I understand the operating responsibilities I am stepping into, I have direct visibility into how scheduling, documentation, staffing and service delivery affect the floor, and I am deliberate about turning ambiguity into clear ownership and process. Where I lack company-specific experience, especially finance or higher-level HR decisions, I would learn the established process quickly and involve the right leader rather than guessing. I think the risk is best reduced by how I learn and how I make decisions, not by pretending the gap is not there.',
-  },
-  {
-    q: 'It is 7:10 AM and two RBTs call out. What do you do?',
-    framework: 'Contain first. Identify sessions at risk, review available qualified coverage, check clinical/client constraints, avoid creating another gap, consider labor implications, communicate changes, update the schedule, then verify service delivery. Recurring callouts become a separate trend problem.',
-    sample: 'My first move is to identify exactly which client sessions are now at risk. I would review available staffing in the schedule, look for qualified coverage that fits the required time, and make sure I do not solve one gap by uncovering another session. If the pairing has a clinical consideration, I involve the clinical leader rather than making that judgment myself. After the assignment is settled I update the schedule, communicate the change, and later verify whether the service was actually delivered. If this is becoming a pattern, I separate that from the morning response and investigate the recurring attendance or staffing issue.',
-  },
-  {
-    q: 'How would you handle an employee who is not meeting expectations?',
-    framework: 'Start with a specific observable expectation and evidence. Check understanding, training, ability, barriers, and pattern. Coach/retrain/support or hold accountable as appropriate. Set a follow-up date and reassess. Involve HR/clinical leadership when the issue crosses those scopes.',
-    sample: 'I would start by making the performance gap specific rather than labeling the person. I want to know what expectation was missed, what evidence I have, whether the employee understood it, whether they were trained, and whether there is a real barrier preventing performance. Then I can decide whether the response is coaching, retraining, operational support, or accountability. I would make the next expectation and follow-up date clear so the conversation actually leads somewhere. If the issue involves clinical competency, serious discipline, or another area outside my scope, I would involve the appropriate leader.',
-  },
-  {
-    q: 'What do you know about managing a clinic budget?',
-    framework: 'Be transparent about experience. Demonstrate the mental model: budget versus actual, meaningful variances, labor/OT/admin time and other expenses, causal drivers, approvals, and escalation.',
-    sample: 'I am still developing hands-on budget ownership experience, so I would not overstate that. My understanding is that the operational discipline is to know the plan, compare actual spending against it, identify meaningful variances and understand the drivers before making a decision. Labor would be a major area I would watch, including overtime and paid administrative capacity, but I would not cut a number blindly if the real driver were vacancies or callout coverage. I would learn the company budget and approval process quickly and use it consistently.',
-  },
-  {
-    q: 'How would you work with the Clinical Director?',
-    framework: 'Define complementary ownership. DOO protects operational reliability; CD protects clinical quality. Collaborate where staffing and service delivery have clinical consequences.',
-    sample: 'I see the relationship as complementary rather than competitive. I would own the operational systems that let care happen reliably — staffing, scheduling, training follow-through, documentation timeliness, budget, facility and service continuity — while respecting that treatment decisions and clinical competency belong with qualified clinical leadership. The overlap is where communication matters most, such as determining whether a coverage pairing is clinically appropriate or supporting a crisis without trying to direct the clinical intervention.',
-  },
-  {
-    q: 'What would you do if you genuinely did not know what to do?',
-    framework: 'Do not improvise outside scope. Clarify urgency, protect safety/service, identify decision owner, gather facts, use policy/playbook, escalate appropriately, then learn from it so the same uncertainty is easier next time.',
-    sample: 'I would first determine whether the situation is urgent and whether safety or service continuity needs immediate containment. Then I would identify whether the decision is actually mine. I would use the relevant policy, data or playbook, and if the decision crosses clinical, HR, compliance or regional authority I would involve that owner rather than guessing. Afterward I would capture what I learned so the next occurrence has a clearer path.',
-  },
-];
 
 const nav: { id: Tab; label: string }[] = [
   { id: 'home', label: 'Start Here' },
@@ -340,94 +81,539 @@ const nav: { id: Tab; label: string }[] = [
   { id: 'study', label: 'AI Study Coach' },
 ];
 
-function AuthorityTag({ value }: { value: Responsibility['authority'] }) {
-  if (value === 'Own') return <span className="tag own">Own</span>;
-  if (value === 'Collaborate') return <span className="tag collab">Collaborate</span>;
-  if (value === 'Escalate') return <span className="tag escalate">Escalate</span>;
-  return <><span className="tag own">Own pieces</span><span className="tag collab">Collaborate</span><span className="tag escalate">Escalate when needed</span></>;
+const machines = [
+  ['People', 'Staffing, attendance, training, performance, onboarding, retention.'],
+  ['Service Delivery', 'Turn planned care into delivered care and recover preventable losses.'],
+  ['Execution', 'Documentation, deadlines, reporting, compliance routines, follow-through.'],
+  ['Money', 'Labor, utilization, budget, unit economics, and the cost of operational gaps.'],
+  ['Safety', 'Facility readiness, incidents, policy adherence, escalation, risk containment.'],
+  ['Leadership', 'Priorities, accountability, cross-functional decisions, and fewer surprises upward.'],
+] as const;
+
+const workModes = [
+  ['Event → Playbook', 'Something happened and the response path is already known.'],
+  ['Required work → Workflow', 'Something has to happen consistently and on time.'],
+  ['Ongoing state → Monitor', 'A gauge can drift, so you watch it before deciding to intervene.'],
+  ['Measured gap → DMAIC', 'A meaningful process/output gap exists and the causes are not yet established.'],
+] as const;
+
+const responsibilities: Responsibility[] = [
+  {
+    title: 'Day-to-day clinic leadership',
+    plain: 'Keep the clinic operating reliably each day: staffing, priorities, communication, follow-through, and rapid response when normal operations break.',
+    success: 'The clinic is staffed, decisions happen on time, urgent problems are contained, and owners know the next action.',
+    systems: ['Teams Shifts', 'ABA Connect', 'Daily huddle', 'Escalation channels'],
+    watch: ['Coverage gaps', 'Callouts', 'Missed services', 'Operational blockers'],
+    authority: 'Mixed',
+    interview: 'Show a sequence: see risk early, contain what is urgent, assign ownership, communicate, then verify follow-through.',
+  },
+  {
+    title: 'Build sustainable operations',
+    plain: 'Create repeatable ways of working so the clinic does not depend on one person remembering or rescuing everything.',
+    success: 'Recurring work has an owner, steps, due points, visible status, and a way to detect drift.',
+    systems: ['Playbooks', 'Checklists', 'Trackers', 'Ownership map'],
+    watch: ['Repeat emergencies', 'Dropped handoffs', 'Workarounds', 'Single points of failure'],
+    authority: 'Own',
+    interview: 'Define operations as reliable execution through systems, not heroics.',
+  },
+  {
+    title: 'Growth strategies and processes',
+    plain: 'Help the clinic expand capacity without outrunning staffing, onboarding, training, rooms, schedules, or support.',
+    success: 'Demand and operating capacity grow together rather than creating chronic gaps.',
+    systems: ['Capacity planning', 'Hiring pipeline', 'Onboarding', 'Room/schedule planning'],
+    watch: ['Open demand', 'Vacancies', 'Staff readiness', 'Space constraints'],
+    authority: 'Collaborate',
+    interview: 'Growth is a capacity problem before it is a volume goal: know the constraint before pushing the system harder.',
+  },
+  {
+    title: 'Lead a high-performance operations team',
+    plain: 'Set expectations, develop people, address missed expectations, and create accountability without jumping straight to blame.',
+    success: 'Employees know the standard, receive feedback, have needed training, and repeat misses are addressed promptly.',
+    systems: ['Performance reviews', 'Coaching workflow', 'Training tracker', 'Follow-up dates'],
+    watch: ['Repeat misses', 'Attendance patterns', 'Training gaps', 'Feedback themes'],
+    authority: 'Mixed',
+    interview: 'Use evidence → expectation → training/barrier check → coaching/accountability → follow-up. Escalate HR or clinical issues instead of freelancing them.',
+  },
+  {
+    title: 'Client and stakeholder communication',
+    plain: 'Make sure families, referral sources, and internal partners receive timely operational communication and know who owns next steps.',
+    success: 'Concerns are acknowledged, routed correctly, and closed rather than disappearing between departments.',
+    systems: ['Contact ownership', 'Follow-up tracker', 'Escalation path'],
+    watch: ['Open concerns', 'Unreturned follow-ups', 'Recurring complaints'],
+    authority: 'Collaborate',
+    interview: 'Be responsive while separating operational communication from clinical recommendations.',
+  },
+  {
+    title: 'Training of subordinates',
+    plain: 'Ensure required training is assigned, completed, and followed by competent execution.',
+    success: 'Training is current and employees can actually perform the expected work.',
+    systems: ['Training matrix', 'Due-date tracker', 'Competency follow-up'],
+    watch: ['Overdue training', 'Expirations', 'Repeat errors after training'],
+    authority: 'Own',
+    interview: 'Distinguish training completion from performance. A checked box is not proof that the task is being executed correctly.',
+  },
+  {
+    title: 'Timely documentation',
+    plain: 'Ensure required documentation is completed within expectations and operational delays become visible quickly.',
+    success: 'On-time documentation is stable, overdue items are visible, and repeat patterns are addressed.',
+    systems: ['ABA Connect', 'Timeliness report', 'Follow-up workflow'],
+    watch: ['On-time rate', 'Overdue items', 'Repeat late patterns'],
+    authority: 'Mixed',
+    interview: 'Own timeliness operationally while leaving clinical documentation quality to qualified clinical oversight.',
+  },
+  {
+    title: 'Compliance and quality assurance',
+    plain: 'Make sure operational practices follow required policies, licensing/accreditation expectations, and quality routines.',
+    success: 'Requirements are known, evidence is maintained, gaps have owners, and exceptions are escalated rather than improvised.',
+    systems: ['Audit checklist', 'Policy library', 'Corrective-action tracker'],
+    watch: ['Audit findings', 'Expired requirements', 'Repeat exceptions'],
+    authority: 'Escalate',
+    interview: 'Do not pretend to be the compliance expert. Show policy discipline, documentation, and escalation judgment.',
+  },
+  {
+    title: 'Financial oversight and budgets',
+    plain: 'Understand what the clinic earns and spends, whether labor and departments are within plan, and which operating choices drive variance.',
+    success: 'Actual versus plan is visible, meaningful variance is explained, and actions are controlled instead of reflexive.',
+    systems: ['Budget report', 'Labor/OT report', 'Expense approvals', 'Unit-economics calculator'],
+    watch: ['Budget variance', 'Overtime', 'Labor cost per billable hour', 'Utilization'],
+    authority: 'Mixed',
+    interview: 'Be transparent about the experience gap, then demonstrate the discipline: compare actual to plan, quantify the driver, decide within authority, and escalate exceptions.',
+  },
+  {
+    title: 'Employee and client safety',
+    plain: 'Maintain an environment where foreseeable risks are identified and urgent events trigger the correct response.',
+    success: 'Immediate safety is stabilized first, staff know the response path, and incidents are documented/escalated through policy.',
+    systems: ['Safety checks', 'Incident workflow', 'Emergency contacts', 'Facility checks'],
+    watch: ['Incidents', 'Open corrective actions', 'Hazards', 'Audit dates'],
+    authority: 'Mixed',
+    interview: 'Lead with immediate safety and policy; support clinical crisis response without inventing clinical procedures.',
+  },
+  {
+    title: 'Facility tours and readiness',
+    plain: 'Keep the physical clinic functional, safe, presentable, and ready for clients, families, staff, and visitors.',
+    success: 'Issues are visible, prioritized by risk/service impact, assigned, and closed.',
+    systems: ['Walkthrough checklist', 'Facilities tickets', 'Readiness log'],
+    watch: ['Open repairs', 'Safety hazards', 'Room readiness'],
+    authority: 'Own',
+    interview: 'Frame the tour as an operating check: observe, capture, assign, follow up.',
+  },
+  {
+    title: 'Weekly, monthly, and quarterly reporting',
+    plain: 'Turn activity into a reliable operating picture leadership can use.',
+    success: 'Reports are accurate, on time, and explain material changes rather than merely listing numbers.',
+    systems: ['Reporting calendar', 'Monitor baseline', 'Variance notes'],
+    watch: ['Service delivery', 'Staffing', 'Documentation', 'Budget', 'Safety/quality'],
+    authority: 'Own',
+    interview: 'A metric is only useful when you can state source, target, current state, variance, cause confidence, and next action.',
+  },
+  {
+    title: 'Crisis intervention with the clinical team',
+    plain: 'Support safe operations during crises while qualified clinical leaders own clinical intervention decisions.',
+    success: 'Roles are clear, staffing/space/communication support the response, and operations does not interfere with clinical safety.',
+    systems: ['Crisis protocol', 'Escalation contacts', 'Staffing support'],
+    watch: ['Incident frequency', 'Staff readiness', 'Operational barriers during crises'],
+    authority: 'Collaborate',
+    interview: 'State the scope boundary clearly: operations supports the environment and coordination; clinical leaders direct clinical judgment.',
+  },
+  {
+    title: 'Medication policy adherence',
+    plain: 'Ensure operational handling follows the defined medication procedure and exceptions are escalated.',
+    success: 'Staff follow policy exactly and questions move to the appropriate qualified leader.',
+    systems: ['Medication policy', 'Training records', 'Exception reporting'],
+    watch: ['Policy deviations', 'Training gaps'],
+    authority: 'Escalate',
+    interview: 'Demonstrate policy discipline and scope awareness, not medical decision-making.',
+  },
+  {
+    title: 'Mitigate missed services',
+    plain: 'Reduce preventable loss of planned service by responding to callouts, cancellations, vacancies, and schedule gaps quickly and intelligently.',
+    success: 'At-risk sessions are identified early, appropriate coverage is used when possible, and recurring loss patterns become measurable.',
+    systems: ['Teams Shifts', 'ABA Connect', 'Coverage Board', 'Callout playbook'],
+    watch: ['Utilization', 'Missed-service rate by cause', 'Reschedule capture', 'Coverage gaps'],
+    authority: 'Mixed',
+    interview: 'Contain today first. Then verify what was delivered. If a recurring measurable gap remains and causes are unclear, investigate the process rather than guessing.',
+  },
+];
+
+const defaultMoney: Record<MoneyKey, MoneyField> = {
+  authorizedHours: { label: 'Authorized hours per week', value: 1200, state: 'assumed', unit: 'hr/wk' },
+  utilization: { label: 'Utilization rate', value: 85, state: 'assumed', unit: '%' },
+  reimbursement: { label: 'Average reimbursement per hour', value: 85, state: 'assumed', unit: '$/hr' },
+  loadedRbtCost: { label: 'Loaded RBT cost per hour', value: 32, state: 'assumed', unit: '$/hr' },
+  bcbaCost: { label: 'BCBA cost per month', value: 9500, state: 'assumed', unit: '$/mo' },
+  bcbaCount: { label: 'Number of BCBAs', value: 4, state: 'assumed', unit: 'count' },
+  fixedOverhead: { label: 'Fixed monthly overhead', value: 30000, state: 'assumed', unit: '$/mo' },
+  rbtBudgeted: { label: 'RBT headcount — budgeted', value: 35, state: 'assumed', unit: 'RBTs' },
+  rbtActual: { label: 'RBT headcount — actual', value: 32, state: 'assumed', unit: 'RBTs' },
+};
+
+const defaultGauges: MonitorGauge[] = [
+  { id: 'utilization', machine: 'Service Delivery', label: 'Utilization — delivered ÷ authorized', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'missed-service', machine: 'Service Delivery', label: 'Missed-service rate — family cancel / tech callout / no-show / transportation', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'reschedule-capture', machine: 'Service Delivery', label: 'Reschedule capture rate', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'intake-cycle', machine: 'Service Delivery', label: 'Intake → first session cycle time', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'rbt-turnover', machine: 'People', label: 'RBT turnover — trailing 12 months', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'attrition-90', machine: 'People', label: '90-day attrition', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'time-to-fill', machine: 'People', label: 'Time-to-fill — RBT', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'supervision-ratio', machine: 'People', label: 'BCBA supervision ratio / caseload', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'documentation', machine: 'Execution', label: 'On-time documentation rate', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'claims-ar', machine: 'Execution', label: 'Clean claim rate / days in A/R', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'budget-variance', machine: 'Money', label: 'Budget variance', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'labor-billable', machine: 'Money', label: 'Labor cost per billable hour', current: '', target: '', source: '', state: 'not-yet-tracked' },
+  { id: 'safety', machine: 'Safety', label: 'Incident rate / open corrective actions / next audit date', current: '', target: '', source: '', state: 'not-yet-tracked' },
+];
+
+const playbooks: Playbook[] = [
+  {
+    id: 'callout',
+    title: '7:10 AM — RBT Callout',
+    trigger: 'An RBT calls out before a scheduled client session.',
+    objective: 'Preserve the planned service safely and appropriately without creating a second coverage problem.',
+    steps: [
+      'Identify every affected client/session and how many service hours are now at risk.',
+      'Check Teams Shifts for float, unassigned, partial-overlap, or movable capacity.',
+      'Filter candidates for time fit and required qualifications/training.',
+      'Check client-specific clinical considerations with the appropriate clinical leader when needed.',
+      'Reject any move that simply uncovers another client unless leadership deliberately accepts that tradeoff.',
+      'Check overtime, policy, and approval implications before committing.',
+      'Assign the best viable coverage, update the schedule, and communicate the change.',
+      'Later verify in ABA Connect whether the planned service was actually rendered and record the cause if it was missed.',
+    ],
+    escalateIf: [
+      'No appropriate coverage exists and a client will lose a meaningful block of planned service.',
+      'Coverage requires an overtime, staffing, or policy exception outside your authority.',
+      'Multiple simultaneous callouts create a center-level service continuity problem.',
+      'The callout pattern is recurring enough that today is no longer an isolated event.',
+    ],
+    window: 'Same day',
+    scenario: 'Changed detail: a qualified RBT can cover the entire session, but the move would place that employee into overtime that requires approval. What is the escalation call?',
+    choices: ['Assign first and mention it in the weekly report', 'Escalate the approval need the same day before committing the OT', 'Do not escalate because service continuity is always more important than labor controls', 'Cancel the client immediately'],
+    correct: 1,
+    reasoning: 'You found a viable operational option, but the approval constraint means the decision is no longer fully yours. Escalate before creating an unauthorized labor commitment.',
+  },
+  {
+    id: 'performance',
+    title: 'Employee Performance Miss',
+    trigger: 'An employee repeatedly misses an established operational expectation.',
+    objective: 'Correct performance using evidence and the right management response without guessing at motive.',
+    steps: [
+      'State the exact expectation that was missed and collect specific evidence.',
+      'Confirm the employee knew the expectation and had access to the required training/resources.',
+      'Determine whether the issue is knowledge/skill, clarity, an operational barrier, or a pattern of nonperformance.',
+      'Coordinate with clinical leadership if the concern is clinical competence or treatment execution.',
+      'Coach, retrain, remove a verified barrier, or move into accountability/corrective action as appropriate.',
+      'Set the next expectation and a concrete follow-up date.',
+      'Reassess performance against evidence rather than impressions.',
+    ],
+    escalateIf: [
+      'The issue involves safety, harassment, discrimination, retaliation, or another HR-sensitive allegation.',
+      'Formal discipline, suspension, termination, or an action outside your delegated authority may be required.',
+      'A clinical-competence concern affects client care.',
+      'Performance remains below expectation after a documented coaching/remediation cycle.',
+    ],
+    window: 'Same day',
+    scenario: 'Changed detail: during the performance conversation, the employee says the supervisor is retaliating against them. What do you do?',
+    choices: ['Continue investigating alone until you decide who is right', 'Pause the ordinary coaching path and escalate the allegation through the appropriate manager/HR channel the same day', 'Tell the employee retaliation is outside the scope of the conversation', 'Wait for the annual review'],
+    correct: 1,
+    reasoning: 'The allegation changes the category of the issue. Your job is to preserve facts and route it through the correct process, not become the sole investigator.',
+  },
+  {
+    id: 'delivery',
+    title: 'Service Delivery Falls Below Target',
+    trigger: 'A service-delivery gauge shows a sustained, meaningful miss against target.',
+    objective: 'Separate immediate containment from process investigation and avoid changing a system before the gap is understood.',
+    steps: [
+      'Verify the metric definition, timeframe, source, and target before reacting.',
+      'Contain any current-day coverage or safety problem first.',
+      'Measure the size and duration of the gap.',
+      'Split missed service by cause: family cancellation, tech callout, no-show, transportation, vacancy, scheduling, or other verified categories.',
+      'If the gap is recurring and important causes are still unknown, use DMAIC to define, measure, analyze, improve, and control the process.',
+      'Choose the smallest justified intervention, assign an owner, and define what result would count as improvement.',
+      'Monitor the gauge long enough to know whether the intervention held.',
+    ],
+    escalateIf: [
+      'The miss is large enough to threaten service commitments, budget expectations, or regional goals.',
+      'The corrective action requires staffing, budget, policy, or capital decisions above your authority.',
+      'The data suggests a compliance, safety, or systemic quality concern.',
+      'The variance persists despite a controlled intervention.',
+    ],
+    window: 'Weekly report',
+    scenario: 'Changed detail: utilization drops 15 points in a single week across many clients and the source data checks out. How should the regional leader hear about it?',
+    choices: ['Wait for the normal weekly report because the playbook says weekly', 'Same day, with the verified size of the drop, what is currently known, what is not known, and the containment plan', 'Not at all until root cause is proven', 'Only after a DMAIC project is complete'],
+    correct: 1,
+    reasoning: 'The magnitude and speed changed the escalation threshold. Fewer surprises means surfacing a material verified change before the normal reporting cadence, while being explicit about what is not yet known.',
+  },
+];
+
+const interviewQuestions: InterviewQuestion[] = [
+  {
+    id: 'experience',
+    question: 'Talk to me about your experience.',
+    testing: 'Whether you have a thesis about why your experience matters to this seat, rather than a chronological resume recital.',
+    failure: 'Walking job-by-job through your history without connecting it to the operating problems this role owns.',
+    note: 'Build around relevance: frontline system knowledge, operating exposure, what you have learned, and the gaps you are not pretending away.',
+  },
+  {
+    id: 'team',
+    question: "You've never managed anyone. Why should I give you a team?",
+    testing: 'Self-assessment honesty, management judgment, and whether you understand that learning to manage is different from claiming you already have.',
+    failure: 'Inflating mentoring, projects, or informal influence into management experience you did not actually have.',
+  },
+  {
+    id: 'bcba',
+    question: 'How do you hold a BCBA accountable when they used to supervise you?',
+    testing: 'Whether you understand authority as standards-based and role-based rather than personal status.',
+    failure: 'Generic statements about mutual respect without naming the standard, evidence, conversation, boundary, and escalation path.',
+  },
+  {
+    id: 'wrong',
+    question: 'Tell me about a time you were wrong.',
+    testing: 'Whether you can take correction, revise your thinking, and avoid defending the old solution.',
+    failure: 'Using the story to argue that leadership should have accepted the proposal anyway.',
+    note: 'Use the documentation-incentive proposal as the event. The learning point is that you moved to a solution before establishing root cause; do not turn the answer into a verdict on leadership.',
+  },
+  {
+    id: 'against',
+    question: "What's the strongest argument against hiring me?",
+    testing: 'Your willingness to surface the real risk in the room and learn how the interviewer sees it.',
+    failure: 'Asking defensively, arguing with the answer, or using the question as a setup for self-promotion.',
+    note: 'This is primarily a question for you to ask the interviewer. Draft how you will ask it cleanly, then practice listening without rebuttal.',
+    askInterviewer: true,
+  },
+  {
+    id: '90days',
+    question: 'What would you do in your first 90 days?',
+    testing: 'Restraint: whether you will learn the operating system before redesigning it.',
+    failure: 'Arriving with a list of changes for a clinic you have not measured, mapped, or been accountable for yet.',
+    note: 'A strong structure is measurement, relationships, operating cadence, process mapping, baseline confirmation, then only justified changes.',
+  },
+];
+
+const restraints = [
+  'Clinical protocols and case decisions',
+  'The existing documentation enforcement approach',
+  'Staffing model restructuring',
+  'Compensation',
+  'Anything requiring capital',
+  'Any process not personally mapped',
+];
+
+const coverageCandidates = [
+  { name: 'Taylor — Float', fit: ['Available', 'Full time match', 'Qualified', 'No client displaced', 'No OT flag'], viable: true },
+  { name: 'Chris — Assigned', fit: ['Available', 'Qualified', 'Moving creates another gap'], viable: false },
+  { name: 'Jamie — Late start', fit: ['Qualified', 'Available at 10:00', 'Time mismatch'], viable: false },
+];
+
+function money(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0);
+}
+
+function pct(value: number) {
+  return `${Number.isFinite(value) ? value.toFixed(1) : '0.0'}%`;
+}
+
+function safeNumber(value: string) {
+  const cleaned = value.replace(/[^0-9.-]/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export default function Page() {
   const [tab, setTab] = useState<Tab>('home');
+  const [activeMachine, setActiveMachine] = useState<string>('Money');
   const [openResponsibility, setOpenResponsibility] = useState<number | null>(0);
-  const [coverageChoice, setCoverageChoice] = useState<string | null>(null);
-  const [quizIndex, setQuizIndex] = useState(0);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [answered, setAnswered] = useState(false);
-  const [misses, setMisses] = useState<Miss[]>([]);
-  const [score, setScore] = useState(0);
-  const [flashIndex, setFlashIndex] = useState(0);
-  const [flashFlipped, setFlashFlipped] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState('');
-  const [aiPack, setAiPack] = useState<AiPack | null>(null);
-  const [practiceAnswer, setPracticeAnswer] = useState('');
-  const [interviewIndex, setInterviewIndex] = useState(0);
+  const [moneyInputs, setMoneyInputs] = useState<Record<MoneyKey, MoneyField>>(defaultMoney);
+  const [gauges, setGauges] = useState<MonitorGauge[]>(defaultGauges);
+  const [restraintChecks, setRestraintChecks] = useState<Record<string, boolean>>({});
+  const [coveragePick, setCoveragePick] = useState<number | null>(null);
+  const [playbookChoices, setPlaybookChoices] = useState<Record<string, number>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [timerQuestion, setTimerQuestion] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(90);
+  const [coachQuestion, setCoachQuestion] = useState(interviewQuestions[0].question);
+  const [coachAnswer, setCoachAnswer] = useState('');
+  const [coachOutput, setCoachOutput] = useState<CoachOutput | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState('');
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('doo-study-state');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed.misses)) setMisses(parsed.misses);
-        if (typeof parsed.score === 'number') setScore(parsed.score);
-      }
-    } catch {}
+      const savedMoney = localStorage.getItem('doo.money.v2');
+      const savedGauges = localStorage.getItem('doo.monitor.v2');
+      const savedDrafts = localStorage.getItem('doo.interview.v2');
+      const savedRestraints = localStorage.getItem('doo.restraints.v1');
+      if (savedMoney) setMoneyInputs(JSON.parse(savedMoney));
+      if (savedGauges) setGauges(JSON.parse(savedGauges));
+      if (savedDrafts) setDrafts(JSON.parse(savedDrafts));
+      if (savedRestraints) setRestraintChecks(JSON.parse(savedRestraints));
+    } catch {
+      // Local state is optional; malformed storage should never block interview prep.
+    }
   }, []);
 
   useEffect(() => {
-    try { localStorage.setItem('doo-study-state', JSON.stringify({ misses, score })); } catch {}
-  }, [misses, score]);
+    localStorage.setItem('doo.money.v2', JSON.stringify(moneyInputs));
+  }, [moneyInputs]);
+  useEffect(() => {
+    localStorage.setItem('doo.monitor.v2', JSON.stringify(gauges));
+  }, [gauges]);
+  useEffect(() => {
+    localStorage.setItem('doo.interview.v2', JSON.stringify(drafts));
+  }, [drafts]);
+  useEffect(() => {
+    localStorage.setItem('doo.restraints.v1', JSON.stringify(restraintChecks));
+  }, [restraintChecks]);
 
-  const weakTopics = useMemo(() => {
-    const counts = new Map<string, number>();
-    misses.forEach(m => counts.set(m.topic, (counts.get(m.topic) || 0) + 1));
-    return [...counts.entries()].sort((a,b) => b[1]-a[1]).map(([topic]) => topic);
-  }, [misses]);
+  useEffect(() => {
+    const utilizationGauge = gauges.find((g) => g.id === 'utilization');
+    if (utilizationGauge?.state !== 'confirmed') return;
+    const value = safeNumber(utilizationGauge.current);
+    if (value === null) return;
+    setMoneyInputs((current) => ({
+      ...current,
+      utilization: { ...current.utilization, value, state: 'confirmed' },
+    }));
+  }, [gauges]);
 
-  const adaptiveFlashcards = useMemo(() => {
-    if (!weakTopics.length) return baseFlashcards;
-    return [...baseFlashcards].sort((a,b) => Number(weakTopics.includes(b.topic)) - Number(weakTopics.includes(a.topic)));
-  }, [weakTopics]);
+  useEffect(() => {
+    if (!timerQuestion) return;
+    if (seconds <= 0) return;
+    const handle = window.setTimeout(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearTimeout(handle);
+  }, [timerQuestion, seconds]);
 
-  const currentQ = quizBank[quizIndex % quizBank.length];
+  const confirmedGaugeCount = useMemo(() => gauges.filter((g) => g.state === 'confirmed').length, [gauges]);
 
-  function answerQuiz(i: number) {
-    if (answered) return;
-    setSelected(i);
-    setAnswered(true);
-    if (i === currentQ.correctIndex) setScore(s => s + 1);
-    else {
-      setMisses(prev => [...prev, {
-        question: currentQ.question,
-        chosen: currentQ.options[i],
-        correct: currentQ.options[currentQ.correctIndex],
-        topic: currentQ.topic,
-      }].slice(-30));
+  const economics = useMemo(() => {
+    const monthFactor = 4.33;
+    const authorizedMonthly = Math.max(0, moneyInputs.authorizedHours.value) * monthFactor;
+    const utilization = Math.max(0, Math.min(100, moneyInputs.utilization.value)) / 100;
+    const deliveredMonthly = authorizedMonthly * utilization;
+    const reimbursement = Math.max(0, moneyInputs.reimbursement.value);
+    const loadedRbt = Math.max(0, moneyInputs.loadedRbtCost.value);
+    const bcbaMonthly = Math.max(0, moneyInputs.bcbaCost.value) * Math.max(0, moneyInputs.bcbaCount.value);
+    const revenue = deliveredMonthly * reimbursement;
+    const rbtLabor = deliveredMonthly * loadedRbt;
+    const directLabor = rbtLabor + bcbaMonthly;
+    const contribution = revenue - directLabor;
+    const contributionPct = revenue > 0 ? (contribution / revenue) * 100 : 0;
+    const operatingContribution = contribution - Math.max(0, moneyInputs.fixedOverhead.value);
+    const incrementalMarginPerHour = reimbursement - loadedRbt;
+    const onePoint = authorizedMonthly * 0.01 * incrementalMarginPerHour;
+    const budgetedRbts = Math.max(1, moneyInputs.rbtBudgeted.value);
+    const vacancyBillableHours = (authorizedMonthly / budgetedRbts) * utilization;
+    const vacancyCost = vacancyBillableHours * incrementalMarginPerHour;
+    const cancellationCost = authorizedMonthly * 0.1 * incrementalMarginPerHour;
+    const laborPerBillable = deliveredMonthly > 0 ? directLabor / deliveredMonthly : 0;
+    return {
+      revenue,
+      directLabor,
+      contribution,
+      contributionPct,
+      operatingContribution,
+      onePoint,
+      vacancyCost,
+      cancellationCost,
+      laborPerBillable,
+      headcountGap: moneyInputs.rbtActual.value - moneyInputs.rbtBudgeted.value,
+    };
+  }, [moneyInputs]);
+
+  const allMoneyConfirmed = Object.values(moneyInputs).every((field: MoneyField) => field.state === 'confirmed');
+
+  function updateMoney(key: MoneyKey, patch: Partial<MoneyField>) {
+    setMoneyInputs((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+  }
+
+  function updateGauge(id: string, patch: Partial<MonitorGauge>) {
+    setGauges((current) => current.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+  }
+
+  function startTimer(id: string) {
+    setTimerQuestion(id);
+    setSeconds(90);
+  }
+
+  async function runCoach() {
+    if (!coachAnswer.trim()) {
+      setCoachError('Write the answer you want challenged first.');
+      return;
+    }
+    setCoachLoading(true);
+    setCoachError('');
+    setCoachOutput(null);
+    try {
+      const response = await fetch('/api/coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: coachQuestion, answer: coachAnswer }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || 'The interviewer could not respond.');
+      setCoachOutput(data);
+    } catch (error) {
+      setCoachError(error instanceof Error ? error.message : 'The interviewer could not respond.');
+    } finally {
+      setCoachLoading(false);
     }
   }
 
-  function nextQuestion() {
-    setQuizIndex(i => (i + 1) % quizBank.length);
-    setSelected(null);
-    setAnswered(false);
-  }
+  function renderMoneyCalculator() {
+    return (
+      <div className="card moneyLab">
+        <div className="sectionHead">
+          <div>
+            <div className="eyebrow">Money machine · working model</div>
+            <h2>Clinic unit economics</h2>
+            <p className="muted">The point is not to memorize invented numbers. Change them, mark what is confirmed, and learn what each operating lever is worth.</p>
+          </div>
+          <span className={`statusBadge ${allMoneyConfirmed ? 'confirmed' : 'assumed'}`}>{allMoneyConfirmed ? 'All inputs confirmed' : 'Model contains assumptions'}</span>
+        </div>
 
-  async function generateAiPack() {
-    setAiLoading(true);
-    setAiError('');
-    try {
-      const res = await fetch('/api/coach', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ missedTopics: weakTopics, missedQuestions: misses, mode: 'both' }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Unable to generate study pack.');
-      setAiPack(data);
-    } catch (e) {
-      setAiError(e instanceof Error ? e.message : 'Unable to generate study pack.');
-    } finally { setAiLoading(false); }
+        <div className="moneyInputs">
+          {(Object.keys(moneyInputs) as MoneyKey[]).map((key) => {
+            const field = moneyInputs[key];
+            return (
+              <div className={`moneyInput ${field.state}`} key={key}>
+                <label>{field.label}</label>
+                <div className="inputLine">
+                  <input
+                    type="number"
+                    step="any"
+                    value={field.value}
+                    onChange={(e) => updateMoney(key, { value: Number(e.target.value) })}
+                    aria-label={field.label}
+                  />
+                  <span>{field.unit}</span>
+                </div>
+                <select value={field.state} onChange={(e) => updateMoney(key, { state: e.target.value as 'assumed' | 'confirmed' })}>
+                  <option value="assumed">assumed</option>
+                  <option value="confirmed">confirmed</option>
+                </select>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="metricGrid section">
+          <div className="metric"><div className="detailLabel">Monthly revenue</div><div className="metricValue">{money(economics.revenue)}</div></div>
+          <div className="metric"><div className="detailLabel">Direct labor</div><div className="metricValue">{money(economics.directLabor)}</div></div>
+          <div className="metric"><div className="detailLabel">Contribution margin</div><div className="metricValue">{money(economics.contribution)}</div><div className="small muted">{pct(economics.contributionPct)}</div></div>
+          <div className="metric"><div className="detailLabel">After fixed overhead</div><div className="metricValue">{money(economics.operatingContribution)}</div></div>
+          <div className="metric emphasisMetric"><div className="detailLabel">1 utilization point / month</div><div className="metricValue">{money(economics.onePoint)}</div></div>
+          <div className="metric"><div className="detailLabel">30-day RBT vacancy</div><div className="metricValue">{money(economics.vacancyCost)}</div><div className="small muted">Estimated lost billable contribution</div></div>
+          <div className="metric"><div className="detailLabel">10% cancellation rate</div><div className="metricValue">{money(economics.cancellationCost)}</div><div className="small muted">Estimated lost billable contribution</div></div>
+          <div className="metric"><div className="detailLabel">Labor cost / billable hr</div><div className="metricValue">{money(economics.laborPerBillable)}</div><div className="small muted">RBT + BCBA labor ÷ delivered hours</div></div>
+        </div>
+
+        <div className="speakLine">
+          <strong>Say it out loud:</strong>{' '}
+          {allMoneyConfirmed ? 'At this clinic' : 'At these currently entered inputs'}, one point of utilization is worth about <strong>{money(economics.onePoint)} per month</strong>.{' '}
+          {allMoneyConfirmed ? '' : 'Until the inputs are confirmed, this is a model — not a claim about Katy.'}
+        </div>
+        <p className="small muted formulaNote">Model definitions: 4.33 weeks/month; contribution = revenue − RBT direct labor − BCBA monthly labor; vacancy and cancellation estimates use reimbursement less loaded RBT cost as incremental margin. Fixed overhead is shown separately so it is not mislabeled as variable contribution.</p>
+      </div>
+    );
   }
 
   return (
@@ -435,211 +621,239 @@ export default function Page() {
       <header className="topbar">
         <div className="topbarInner">
           <div className="brand"><span className="brandMark">DO</span><span>DOO Field Manual</span></div>
-          <nav className="nav" aria-label="Main navigation">
-            {nav.map(item => <button key={item.id} className={tab===item.id?'active':''} onClick={()=>setTab(item.id)}>{item.label}</button>)}
+          <nav className="nav" aria-label="Field manual sections">
+            {nav.map((item) => (
+              <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>
+            ))}
           </nav>
+          <div className="confirmedHeader">{confirmedGaugeCount} of 13 confirmed</div>
         </div>
       </header>
 
       <main className="main">
-        {tab === 'home' && <>
-          <div className="hero">
-            <section className="card heroMain">
-              <div className="eyebrow">Interview instruction manual</div>
-              <h1>Learn the job by operating it.</h1>
-              <p className="lead">The goal is not to memorize 40 responsibilities. Learn what the DOO owns, what the clinic gauges are telling you, which playbook to open when something happens, and how to explain your thinking under interview pressure.</p>
-              <div className="pillRow"><span className="pill">JD → plain English</span><span className="pill">Logic trees</span><span className="pill">Coverage simulator</span><span className="pill">Experience-gap practice</span><span className="pill">Adaptive AI study</span></div>
-            </section>
-            <aside className="card">
-              <div className="eyebrow">Core mental model</div>
-              <h2 style={{marginTop:8}}>Four ways to manage work</h2>
-              <div className="stack">
-                <div><strong>Event → Playbook</strong><div className="muted small">Something happened. The immediate response is known.</div></div>
-                <div><strong>Required work → Workflow</strong><div className="muted small">Something must happen consistently.</div></div>
-                <div><strong>Ongoing state → Monitor</strong><div className="muted small">A gauge can drift, so watch it.</div></div>
-                <div><strong>Measured gap + unknown cause → DMAIC</strong><div className="muted small">Investigate only after urgent containment if needed.</div></div>
+        {tab === 'home' && (
+          <>
+            <section className="hero">
+              <div className="card heroMain">
+                <div className="eyebrow">Interview operating system</div>
+                <h1>Learn the job by operating it.</h1>
+                <p className="lead">The job description is the map. The playbooks remove avoidable thinking during routine events. The monitor tells you what is actually happening. Your interview job is to show judgment without pretending you already have experience you do not.</p>
+                <div className="pillRow">
+                  {workModes.map(([name]) => <span className="pill" key={name}>{name}</span>)}
+                </div>
               </div>
-            </aside>
-          </div>
-
-          <section className="section">
-            <div className="sectionHead"><div><div className="eyebrow">The map</div><h2>Six operating machines</h2><p className="muted">These organize the role. They are not six giant assignments you must solve at once.</p></div></div>
-            <div className="grid6">
-              {[
-                ['People','Staffing, attendance, training, performance'],
-                ['Service Delivery','Planned care becoming delivered care'],
-                ['Execution','Documentation, deadlines, recurring work'],
-                ['Money','Labor, overtime, expenses, budget variance'],
-                ['Safety','People, facility, incidents, readiness'],
-                ['Leadership','Priorities, ownership, communication, escalation'],
-              ].map(([a,b])=><div className="machine" key={a}><strong>{a}</strong><span className="muted small">{b}</span></div>)}
-            </div>
-          </section>
-
-          <section className="section grid3">
-            <div className="card"><div className="eyebrow">Start 1</div><h3>Learn the JD</h3><p className="muted">Every responsibility is translated into what it means, what success looks like, what to watch, what breaks, and how to answer it.</p><button className="btn btnPrimary" onClick={()=>setTab('manual')}>Open JD Manual</button></div>
-            <div className="card"><div className="eyebrow">Start 2</div><h3>Run the 7:10 AM callout</h3><p className="muted">Use a logic tree so the process carries the cognitive load while you still make the judgment calls.</p><button className="btn btnPrimary" onClick={()=>setTab('playbooks')}>Open Playbooks</button></div>
-            <div className="card"><div className="eyebrow">Start 3</div><h3>Practice being challenged</h3><p className="muted">Answer the questions most likely to expose the experience gap before the interviewer gets the chance.</p><button className="btn btnPrimary" onClick={()=>setTab('interview')}>Enter Interview Room</button></div>
-          </section>
-        </>}
-
-        {tab === 'manual' && <>
-          <div className="sectionHead"><div><div className="eyebrow">Public job description translated</div><h1 style={{fontSize:44,color:'var(--ink)'}}>What does this job actually entail?</h1><p className="muted">Open one responsibility at a time. The purpose is comprehension, not memorization.</p></div></div>
-          <div className="stack">
-            {responsibilities.map((r,i)=><section className="card" key={r.title}>
-              <div className="jdCard">
-                <div className="num">{String(i+1).padStart(2,'0')}</div>
-                <div><h3>{r.title}</h3><p className="muted" style={{marginBottom:4}}>{r.plain}</p><AuthorityTag value={r.authority}/></div>
-                <button className="btn btnGhost" onClick={()=>setOpenResponsibility(openResponsibility===i?null:i)}>{openResponsibility===i?'Close':'Learn'}</button>
-              </div>
-              {openResponsibility===i && <div className="details">
-                <div className="detail"><div className="detailLabel">Success looks like</div>{r.success}</div>
-                <div className="detail"><div className="detailLabel">Systems / tools</div>{r.systems.map(x=><span className="tag" key={x}>{x}</span>)}</div>
-                <div className="detail"><div className="detailLabel">What I watch</div>{r.watch.map(x=><span className="tag" key={x}>{x}</span>)}</div>
-                <div className="detail"><div className="detailLabel">Normal operation</div>{r.routine}</div>
-                <div className="detail"><div className="detailLabel">When it breaks</div>{r.break}</div>
-                <div className="detail" style={{gridColumn:'span 3'}}><div className="detailLabel">Interview lens</div>{r.interview}</div>
-              </div>}
-            </section>)}
-          </div>
-        </>}
-
-        {tab === 'playbooks' && <>
-          <div className="sectionHead"><div><div className="eyebrow">Known event → known response</div><h1 style={{fontSize:44,color:'var(--ink)'}}>Playbook Room</h1><p className="muted">A playbook removes the “what am I forgetting?” problem. It does not remove judgment.</p></div></div>
-
-          <section className="card">
-            <div className="sectionHead"><div><div className="eyebrow">Playbook 01</div><h2>7:10 AM RBT Callout</h2><p className="muted">Learning model — exact company policy or approval rules should replace these general steps when known.</p></div><span className="tag escalate">Service at risk</span></div>
-            <div className="flowWrap"><div className="flow">
-              {[
-                ['Callout received','alert'],['Identify affected session','action'],['Check Shifts / available capacity','action'],['Filter for time + qualification','action'],['Check clinical constraints','action'],['Avoid creating second gap','action'],['Confirm assignment / escalate','action'],['Update + communicate','success'],['Verify rendered service','success'],
-              ].map(([label,kind],i)=><span style={{display:'contents'}} key={label}><div className={`flowNode ${kind}`}>{label}</div>{i<8&&<div className="flowArrow">→</div>}</span>)}
-            </div></div>
-          </section>
-
-          <section className="section simGrid">
-            <div className="card">
-              <div className="eyebrow">Coverage command</div><h2>Who covers Client B?</h2>
-              <p><strong>Need:</strong> 8:30 AM–12:30 PM · 4 service hours at risk</p>
-              <p className="muted small">Choose the strongest operational match. Clinical appropriateness is intentionally shown as a required check, not a DOO-only judgment.</p>
-              {[
-                {name:'Taylor — Float',best:true,checks:['Available ✓','Full time match ✓','Qualified ✓','No displacement ✓','No OT risk ✓']},
-                {name:'Chris — Assigned to Client E',best:false,checks:['Time match ✓','Qualified ✓','Moving creates gap ✕']},
-                {name:'Jamie — Starts 10:00 AM',best:false,checks:['Qualified ✓','Time mismatch ✕']},
-              ].map(p=><button key={p.name} className={`person ${coverageChoice===p.name?'best':''}`} style={{width:'100%',textAlign:'left'}} onClick={()=>setCoverageChoice(p.name)}>
-                <strong>{p.name}</strong><div className="checks">{p.checks.map(c=><span key={c} className={`check ${c.includes('✕')?'no':''}`}>{c}</span>)}</div>
-              </button>)}
-              {coverageChoice && <div className="answerBox" style={{marginTop:12}}>{coverageChoice.startsWith('Taylor') ? <><strong>Strong choice.</strong> Taylor preserves the affected service without creating a second uncovered client in this simplified scenario. Next: verify any client-specific clinical constraints, confirm the assignment, update Shifts/communication, and later verify service delivery.</> : <><strong>Keep evaluating.</strong> This choice has a visible operational constraint. A director should avoid transferring the problem elsewhere or accepting a time mismatch without first checking better options.</>}</div>}
-            </div>
-
-            <div className="card">
-              <div className="eyebrow">Playbook 02</div><h2>Employee misses an expectation</h2>
-              <div className="stack">
-                {['Define the exact expectation that was missed','Verify evidence — what actually happened?','Did the employee know the expectation?','Were they trained and able to perform it?','Is there a real barrier or competing condition?','Is this isolated or a pattern?','Choose support / retraining / coaching / accountability','Set the next expectation and follow-up date','Did performance improve?'].map((x,i)=><div className="detail" key={x}><strong>{i+1}. {x}</strong></div>)}
-              </div>
-              <p className="muted small" style={{marginTop:12}}>Clinical competency, serious discipline, HR matters, and other out-of-scope decisions require the appropriate partner/escalation rather than a unilateral DOO answer.</p>
-            </div>
-          </section>
-
-          <section className="section card">
-            <div className="eyebrow">Playbook 03</div><h2>Service delivery falls below target</h2>
-            <div className="flowWrap"><div className="flow">
-              {['Gauge shows sustained gap','Define exact service gap','Contain current uncovered sessions','Measure where loss occurs','Analyze callouts / cancellations / vacancies / schedule gaps','Improve validated drivers','Control: keep watching the gauge'].map((x,i)=><span style={{display:'contents'}} key={x}><div className={`flowNode ${i===0?'alert':i===6?'success':'action'}`}>{x}</div>{i<6&&<div className="flowArrow">→</div>}</span>)}
-            </div></div>
-            <p className="muted small" style={{marginTop:12}}>This is where DMAIC belongs: not because “operations uses Six Sigma,” but because a measurable recurring output is underperforming and the important causes are not yet known.</p>
-          </section>
-        </>}
-
-        {tab === 'monitor' && <>
-          <div className="sectionHead"><div><div className="eyebrow">The instrument panel</div><h1 style={{fontSize:44,color:'var(--ink)'}}>Monitor the clinic</h1><p className="muted">This is a conceptual learning dashboard inspired by the kinds of gauges you showed from ABA Connect. It is not a copy of internal company data.</p></div></div>
-          <div className="metricGrid">
-            <div className="metric"><div className="detailLabel">Completed services</div><div className="metricValue">95%</div><div className="goal">Goal ≥ 85%</div><div className="progress"><span style={{width:'95%'}}/></div></div>
-            <div className="metric"><div className="detailLabel">RBT weekly average</div><div className="metricValue">21h</div><div className="goal">Goal 25h</div><div className="progress"><span style={{width:'84%'}}/></div></div>
-            <div className="metric"><div className="detailLabel">At-risk service</div><div className="metricValue">8h</div><div className="muted small">Callouts + open coverage</div><div className="progress"><span style={{width:'32%'}}/></div></div>
-            <div className="metric"><div className="detailLabel">Documentation on time</div><div className="metricValue">92%</div><div className="muted small">Watch trend, not one point</div><div className="progress"><span style={{width:'92%'}}/></div></div>
-          </div>
-
-          <section className="section grid2">
-            <div className="card"><div className="eyebrow">Planned reality</div><h2>Teams Shifts</h2><p className="muted">Who is supposed to work, when they are scheduled, where coverage exists, and where staffing gaps may form.</p><div className="answerBox"><strong>Question:</strong> Do we have the people/capacity to execute the plan?</div></div>
-            <div className="card"><div className="eyebrow">Actual reality</div><h2>ABA Connect</h2><p className="muted">What happened with scheduled/rendered service, billable hours, cancellations, appointments, documentation and other operational indicators.</p><div className="answerBox"><strong>Question:</strong> Did planned capacity actually become delivered service?</div></div>
-          </section>
-
-          <section className="section card">
-            <h2>How a DOO reads a gauge</h2>
-            <div className="grid3">
-              <div className="detail"><div className="detailLabel">1. Observe</div>What is the number or trend actually saying?</div>
-              <div className="detail"><div className="detailLabel">2. Compare</div>Against goal, prior period, schedule, budget, or expectation.</div>
-              <div className="detail"><div className="detailLabel">3. Decide</div>Normal variation, immediate containment, performance follow-up, or deeper process investigation?</div>
-            </div>
-          </section>
-        </>}
-
-        {tab === 'interview' && <>
-          <div className="sectionHead"><div><div className="eyebrow">The driver's test</div><h1 style={{fontSize:44,color:'var(--ink)'}}>Interview Room</h1><p className="muted">Practice the exact questions that can expose a knowledge or experience gap. Do not memorize the sample word-for-word; learn the structure.</p></div></div>
-          <div className="grid2">
-            <section className="card">
-              <div className="eyebrow">Question {interviewIndex+1} of {interviewQuestions.length}</div>
-              <h2 className="interviewQ" style={{marginTop:10}}>{interviewQuestions[interviewIndex].q}</h2>
-              <textarea value={practiceAnswer} onChange={e=>setPracticeAnswer(e.target.value)} placeholder="Answer out loud first if you can, then type the version you want to refine…"/>
-              <div className="pillRow">
-                <button className="btn btnSecondary" onClick={()=>{setInterviewIndex(i=>(i-1+interviewQuestions.length)%interviewQuestions.length);setPracticeAnswer('')}}>Previous</button>
-                <button className="btn btnPrimary" onClick={()=>{setInterviewIndex(i=>(i+1)%interviewQuestions.length);setPracticeAnswer('')}}>Next question</button>
+              <div className="card">
+                <div className="eyebrow">First principle</div>
+                <h2>Do not change what you have not measured.</h2>
+                <p className="muted">Your first advantage is not having a plan for everything. It is knowing what must be learned, what can be standardized, what needs monitoring, and what requires escalation.</p>
+                <button className="btn btnPrimary" onClick={() => { setActiveMachine('Money'); document.getElementById('machine-lab')?.scrollIntoView({ behavior: 'smooth' }); }}>Open the Money machine</button>
               </div>
             </section>
-            <section className="card">
-              <div className="eyebrow">Answer architecture</div><h3 style={{marginTop:8}}>What a strong answer should contain</h3><div className="answerBox">{interviewQuestions[interviewIndex].framework}</div>
-              <div className="spacer"/><div className="eyebrow">Model answer</div><div className="answerBox" style={{marginTop:8}}>{interviewQuestions[interviewIndex].sample}</div>
-            </section>
-          </div>
-          <section className="section card">
-            <h2>The experience-gap rule</h2>
-            <div className="grid3">
-              <div className="detail"><strong>Do not fake experience.</strong><p className="muted small">Credibility is more useful than inflated claims.</p></div>
-              <div className="detail"><strong>Demonstrate the operating logic.</strong><p className="muted small">Show what you would look at, decide, own, collaborate on, and escalate.</p></div>
-              <div className="detail"><strong>Name how you close the gap.</strong><p className="muted small">Company process, mentorship, data, policy, feedback, and deliberate follow-up.</p></div>
-            </div>
-          </section>
-        </>}
 
-        {tab === 'study' && <>
-          <div className="sectionHead"><div><div className="eyebrow">Adaptive retention</div><h1 style={{fontSize:44,color:'var(--ink)'}}>AI Study Coach</h1><p className="muted">Misses are saved in this browser. Weak topics move to the front of your review, and the AI coach can generate a fresh targeted pack from the material you missed.</p></div></div>
-          <div className="grid2">
-            <section className="card">
-              <div className="sectionHead"><div><div className="eyebrow">Adaptive quiz</div><h2>{currentQ.topic}</h2></div><span className="pill">Score: {score}</span></div>
-              <h3>{currentQ.question}</h3>
-              {currentQ.options.map((opt,i)=>{
-                let cls='quizOption';
-                if(selected===i) cls+=' selected';
-                if(answered && i===currentQ.correctIndex) cls+=' correct';
-                if(answered && selected===i && i!==currentQ.correctIndex) cls+=' wrong';
-                return <button className={cls} key={opt} onClick={()=>answerQuiz(i)}>{opt}</button>;
+            <section className="section">
+              <div className="sectionHead"><div><div className="eyebrow">The six machines</div><h2>What a DOO keeps operating</h2></div><p className="muted">Choose one. The site should narrow your attention, not expand it.</p></div>
+              <div className="grid6">
+                {machines.map(([name, description]) => (
+                  <button key={name} className={`machine machineButton ${activeMachine === name ? 'selectedMachine' : ''}`} onClick={() => setActiveMachine(name)}>
+                    <strong>{name}</strong><span>{description}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="card machineDecision" id="machine-lab">
+                <div className="eyebrow">Selected machine</div>
+                <h3>{activeMachine}</h3>
+                <p className="muted">{machines.find(([name]) => name === activeMachine)?.[1]}</p>
+                {activeMachine === 'Money' ? <p><strong>Your decision:</strong> Which inputs can you honestly mark confirmed today, and which must stay assumed until you get a source?</p> : <p><strong>Your decision:</strong> What is one recurring event, one required workflow, and one gauge you would expect inside this machine?</p>}
+              </div>
+            </section>
+
+            <section className="section grid2">
+              <div className="card restraintCard">
+                <div className="eyebrow">Restraint layer</div>
+                <h2>What I will not touch in the first 90 days</h2>
+                <p className="muted">Check each item as a deliberate commitment. Safety, policy, or direct leadership instruction can override this list; impatience cannot.</p>
+                <div className="stack">
+                  {restraints.map((item) => (
+                    <label className="restraintRow" key={item}>
+                      <input type="checkbox" checked={!!restraintChecks[item]} onChange={(e) => setRestraintChecks((c) => ({ ...c, [item]: e.target.checked }))} />
+                      <span>{item}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="small muted">{Object.values(restraintChecks).filter(Boolean).length} of {restraints.length} deliberately acknowledged.</div>
+              </div>
+              <div className="card">
+                <div className="eyebrow">How to classify work</div>
+                <h2>Choose the management tool before the solution.</h2>
+                <div className="stack">
+                  {workModes.map(([name, description]) => <div className="detail" key={name}><div className="detailLabel">{name}</div>{description}</div>)}
+                </div>
+              </div>
+            </section>
+
+            <section className="section">{renderMoneyCalculator()}</section>
+          </>
+        )}
+
+        {tab === 'manual' && (
+          <section>
+            <div className="sectionHead">
+              <div><div className="eyebrow">JD → operating meaning</div><h1 className="darkTitle">Responsibility manual</h1><p className="muted">Open one responsibility at a time. Your goal is to be able to explain what you would watch, what you would do, and where your authority stops.</p></div>
+            </div>
+            <div className="stack">
+              {responsibilities.map((r, index) => {
+                const open = openResponsibility === index;
+                return (
+                  <div className="card jdCard" key={r.title}>
+                    <div className="num">{String(index + 1).padStart(2, '0')}</div>
+                    <div>
+                      <h3>{r.title}</h3>
+                      <p className="muted">{r.plain}</p>
+                      {open && (
+                        <div className="details">
+                          <div className="detail"><div className="detailLabel">Success looks like</div>{r.success}</div>
+                          <div className="detail"><div className="detailLabel">Systems / tools</div>{r.systems.map((x) => <span className="tag" key={x}>{x}</span>)}</div>
+                          <div className="detail"><div className="detailLabel">Watch</div>{r.watch.map((x) => <span className="tag" key={x}>{x}</span>)}</div>
+                          <div className="detail"><div className="detailLabel">Authority</div><span className={`tag ${r.authority === 'Own' ? 'own' : r.authority === 'Collaborate' ? 'collab' : r.authority === 'Escalate' ? 'escalate' : ''}`}>{r.authority}</span></div>
+                          <div className="detail interviewAngle"><div className="detailLabel">Interview angle</div>{r.interview}</div>
+                        </div>
+                      )}
+                    </div>
+                    <button className="btn btnSecondary" onClick={() => setOpenResponsibility(open ? null : index)}>{open ? 'Close' : 'Work this responsibility'}</button>
+                  </div>
+                );
               })}
-              {answered && <><div className="answerBox" style={{marginTop:12}}>{currentQ.rationale}</div><button className="btn btnPrimary" style={{marginTop:12}} onClick={nextQuestion}>Next question</button></>}
-            </section>
-
-            <section className="card">
-              <div className="sectionHead"><div><div className="eyebrow">Flashcards</div><h2>{adaptiveFlashcards[flashIndex%adaptiveFlashcards.length].topic}</h2></div><span className="pill">Weak topics first</span></div>
-              <button className="flashcard" style={{width:'100%'}} onClick={()=>setFlashFlipped(v=>!v)}>
-                {!flashFlipped ? <div><div className="eyebrow">Prompt</div><h2>{adaptiveFlashcards[flashIndex%adaptiveFlashcards.length].front}</h2><div className="muted small">Tap to reveal</div></div> : <div className="answer"><div className="eyebrow">Answer</div><strong>{adaptiveFlashcards[flashIndex%adaptiveFlashcards.length].back}</strong></div>}
-              </button>
-              <div className="pillRow"><button className="btn btnSecondary" onClick={()=>{setFlashIndex(i=>(i-1+adaptiveFlashcards.length)%adaptiveFlashcards.length);setFlashFlipped(false)}}>Previous</button><button className="btn btnPrimary" onClick={()=>{setFlashIndex(i=>(i+1)%adaptiveFlashcards.length);setFlashFlipped(false)}}>Next card</button></div>
-            </section>
-          </div>
-
-          <section className="section card aiBox">
-            <div className="sectionHead"><div><div className="eyebrow">AI remediation engine</div><h2>Generate a quiz from what you missed</h2><p className="muted">The server sends only your study misses/topics to the model. Do not enter client names, PHI, internal credentials, or proprietary case information.</p></div><button className="btn btnPrimary" style={{background:'#fff',color:'var(--navy)'}} onClick={generateAiPack} disabled={aiLoading}>{aiLoading?'Generating…':'Build targeted study pack'}</button></div>
-            <div className="pillRow">{weakTopics.length ? weakTopics.map(t=><span className="pill" key={t}>{t}</span>) : <span className="pill">No misses yet — core role review</span>}</div>
-            {aiError && <div className="aiOutput" style={{marginTop:14}}>{aiError} The built-in adaptive quiz and flashcards still work without the API.</div>}
-            {aiPack && <div className="grid2" style={{marginTop:16}}>
-              <div><h3>Focus: {aiPack.focus}</h3>{aiPack.flashcards.map((f,i)=><div className="aiOutput" style={{marginTop:8}} key={i}><strong>{f.front}</strong><div style={{marginTop:5,opacity:.86}}>{f.back}</div><div className="small" style={{marginTop:6,opacity:.62}}>{f.topic}</div></div>)}</div>
-              <div><h3>Targeted questions</h3>{aiPack.quiz.map((q,i)=><div className="aiOutput" style={{marginTop:8}} key={i}><strong>{i+1}. {q.question}</strong><div className="small" style={{marginTop:6,opacity:.82}}>Answer: {q.options[q.correctIndex]}</div><div className="small" style={{marginTop:4,opacity:.66}}>{q.rationale}</div></div>)}</div>
-            </div>}
+            </div>
           </section>
+        )}
 
-          <section className="section card">
-            <div className="sectionHead"><div><h2>What the coach is learning</h2><p className="muted">Only your quiz performance in this browser — not employee/client data.</p></div><button className="btn btnDanger" onClick={()=>{setMisses([]);setScore(0);setAiPack(null)}}>Reset study history</button></div>
-            {misses.length===0 ? <p className="muted">No misses recorded yet. Take the quiz and this section will begin identifying your weak areas.</p> : <div className="grid3">{weakTopics.map(topic=><div className="detail" key={topic}><strong>{topic}</strong><div className="muted small">{misses.filter(m=>m.topic===topic).length} miss(es) recorded</div></div>)}</div>}
+        {tab === 'playbooks' && (
+          <section>
+            <div className="sectionHead"><div><div className="eyebrow">Known event → known response</div><h1 className="darkTitle">Playbook room</h1><p className="muted">The tree removes avoidable cognitive load. Director judgment appears at the tradeoffs and escalation point.</p></div></div>
+
+            {playbooks.map((book) => {
+              const selected = playbookChoices[book.id];
+              return (
+                <div className="card section" key={book.id}>
+                  <div className="eyebrow">Trigger: {book.trigger}</div>
+                  <h2>{book.title}</h2>
+                  <p><strong>Objective:</strong> {book.objective}</p>
+                  <div className="flowWrap">
+                    <div className="flow">
+                      {book.steps.map((step, i) => (
+                        <div key={step} style={{ display: 'contents' }}>
+                          <div className={`flowNode ${i === 0 ? 'alert' : i === book.steps.length - 1 ? 'success' : 'action'}`}>{step}</div>
+                          {i < book.steps.length - 1 && <div className="flowArrow">→</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid2 section">
+                    <div className="detail escalationBox"><div className="detailLabel">Escalate if</div><ul>{book.escalateIf.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                    <div className="detail"><div className="detailLabel">Tell your manager within</div><div className="notificationWindow">{book.window}</div><p className="small muted">The point of the seat is not zero problems. It is fewer surprises and better judgment about which problems need regional visibility.</p></div>
+                  </div>
+                  <div className="decisionBox section">
+                    <div className="detailLabel">Escalation rep — one detail changed</div>
+                    <h3>{book.scenario}</h3>
+                    {book.choices.map((choice, idx) => (
+                      <button key={choice} className={`quizOption ${selected === idx ? (idx === book.correct ? 'correct' : 'wrong') : ''}`} onClick={() => setPlaybookChoices((c) => ({ ...c, [book.id]: idx }))}>{choice}</button>
+                    ))}
+                    {selected !== undefined && <div className="answerBox section"><strong>Reasoning:</strong> {book.reasoning}</div>}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="card section">
+              <div className="eyebrow">Coverage command</div>
+              <h2>Who gets the uncovered client?</h2>
+              <p className="muted">This is the 7:10 AM callout translated into a staffing decision. Pick a person, then inspect the consequence.</p>
+              <div className="simGrid">
+                <div className="detail"><div className="detailLabel">At-risk service</div><h3>Client B · 8:30 AM–12:30 PM</h3><p>Four planned service hours need coverage.</p></div>
+                <div>
+                  {coverageCandidates.map((person, idx) => (
+                    <button className={`person coveragePerson ${coveragePick === idx ? (person.viable ? 'best' : 'badPick') : ''}`} key={person.name} onClick={() => setCoveragePick(idx)}>
+                      <strong>{person.name}</strong>
+                      <div className="checks">{person.fit.map((check) => <span key={check} className={`check ${check.includes('gap') || check.includes('mismatch') ? 'no' : ''}`}>{check}</span>)}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {coveragePick !== null && <div className="answerBox section">{coverageCandidates[coveragePick].viable ? 'Best current match: this option preserves the session without displacing another client or creating an obvious labor problem. You would still confirm any client-specific clinical requirement before finalizing.' : 'This choice solves one problem by creating another constraint. Go back through availability, time fit, qualification, client impact, and labor implications.'}</div>}
+            </div>
           </section>
-        </>}
+        )}
+
+        {tab === 'monitor' && (
+          <section>
+            <div className="monitorSticky">
+              <div><div className="eyebrow">Katy baseline sheet</div><h1 className="darkTitle">Monitor</h1></div>
+              <div className="confirmedCount">{confirmedGaugeCount} of 13 confirmed</div>
+            </div>
+            <p className="muted">Do not fill blanks with guesses. “Not yet tracked” is a valid finding. A confirmed metric requires a value and a source you would be willing to name in the interview.</p>
+            <div className="stack">
+              {gauges.map((gauge) => (
+                <div className={`card gaugeRow ${gauge.state}`} key={gauge.id}>
+                  <div className="gaugeName"><span className="tag">{gauge.machine}</span><strong>{gauge.label}</strong></div>
+                  <label>Current<input value={gauge.current} onChange={(e) => updateGauge(gauge.id, { current: e.target.value })} placeholder="value" /></label>
+                  <label>Target<input value={gauge.target} onChange={(e) => updateGauge(gauge.id, { target: e.target.value })} placeholder="target" /></label>
+                  <label>Source<input value={gauge.source} onChange={(e) => updateGauge(gauge.id, { source: e.target.value })} placeholder="report / person / system" /></label>
+                  <label>State<select value={gauge.state} onChange={(e) => updateGauge(gauge.id, { state: e.target.value as ConfirmState })}><option value="not-yet-tracked">not yet tracked</option><option value="assumed">assumed</option><option value="confirmed">confirmed</option></select></label>
+                </div>
+              ))}
+            </div>
+            <div className="card section">
+              <div className="detailLabel">Decision rule</div>
+              <p><strong>Confirmed does not mean good.</strong> It only means you know the current value and source. Once confirmed, compare current to target and decide whether the result is normal variation, a contained event, or a meaningful gap that deserves investigation.</p>
+              <button className="btn btnPrimary" onClick={() => { setTab('home'); setActiveMachine('Money'); }}>Use confirmed overlap in Money calculator</button>
+            </div>
+          </section>
+        )}
+
+        {tab === 'interview' && (
+          <section>
+            <div className="sectionHead"><div><div className="eyebrow">90-second reps</div><h1 className="darkTitle">Interview Room</h1><p className="muted">Draft your own answer. The site gives you the test and the failure mode, not a script.</p></div><div className={`timer ${seconds <= 15 && timerQuestion ? 'timerHot' : ''}`}>{timerQuestion ? `${seconds}s` : '90s'}</div></div>
+            <div className="stack">
+              {interviewQuestions.map((q) => (
+                <div className="card interviewQ" key={q.id}>
+                  <div className="pillRow"><span className="pill">{q.askInterviewer ? 'Question to ask' : 'Question to answer'}</span>{timerQuestion === q.id && <span className="pill">Timer active</span>}</div>
+                  <h2>{q.question}</h2>
+                  <div className="grid2">
+                    <div className="detail"><div className="detailLabel">What they are really testing</div>{q.testing}</div>
+                    <div className="detail"><div className="detailLabel">Failure mode</div>{q.failure}</div>
+                  </div>
+                  {q.note && <div className="answerBox section"><strong>Constraint:</strong> {q.note}</div>}
+                  <label className="draftLabel">Your draft<textarea value={drafts[q.id] || ''} onChange={(e) => setDrafts((d) => ({ ...d, [q.id]: e.target.value }))} placeholder={q.askInterviewer ? 'Draft exactly how you will ask this, then stop talking.' : 'Draft your answer in your own words. Aim for a thesis, evidence, and a clean stop.'} /></label>
+                  <div className="buttonRow"><button className="btn btnPrimary" onClick={() => startTimer(q.id)}>Start 90-second rep</button><button className="btn btnGhost" onClick={() => { setCoachQuestion(q.question); setCoachAnswer(drafts[q.id] || ''); setTab('study'); }}>Send this answer to skeptical interviewer</button></div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === 'study' && (
+          <section>
+            <div className="sectionHead"><div><div className="eyebrow">One hard pushback per rep</div><h1 className="darkTitle">AI Study Coach</h1><p className="muted">This is not a tutor. It is a skeptical regional executive director testing whether your answer is supported, quantified, and operationally specific.</p></div></div>
+            <div className="card aiBox">
+              <label>Interview question<select value={coachQuestion} onChange={(e) => setCoachQuestion(e.target.value)}>{interviewQuestions.filter((q) => !q.askInterviewer).map((q) => <option key={q.id} value={q.question}>{q.question}</option>)}</select></label>
+              <label className="draftLabel">Your answer<textarea value={coachAnswer} onChange={(e) => setCoachAnswer(e.target.value)} placeholder="Answer as if you were sitting across from the Regional Executive Director." /></label>
+              <button className="btn btnPrimary" disabled={coachLoading} onClick={runCoach}>{coachLoading ? 'Pressing the answer…' : 'Give me one hard pushback'}</button>
+              {coachError && <div className="answerBox section">{coachError}</div>}
+              {coachOutput && (
+                <div className="coachGrid section">
+                  <div className="aiOutput"><div className="detailLabel">Pushback</div>{coachOutput.pushback}</div>
+                  <div className="aiOutput"><div className="detailLabel">Unsupported assumption</div>{coachOutput.unsupportedAssumption}</div>
+                  <div className="aiOutput"><div className="detailLabel">Number missing</div>{coachOutput.missingNumber}</div>
+                  <div className="aiOutput"><div className="detailLabel">Method challenge</div>{coachOutput.methodChallenge}</div>
+                </div>
+              )}
+            </div>
+            <div className="card section">
+              <div className="detailLabel">The rule</div>
+              <p>If your answer says “I’d look into it,” the next sentence must say <strong>how</strong>: what data, what source, what comparison, who you would involve, and what would change your decision.</p>
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );
