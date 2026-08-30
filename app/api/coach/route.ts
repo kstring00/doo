@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 type RequestBody = {
-  missedTopics?: string[];
-  missedQuestions?: { question: string; chosen: string; correct: string; topic: string }[];
-  mode?: 'quiz' | 'flashcards' | 'both';
+  question?: string;
+  answer?: string;
+};
+
+type CoachOutput = {
+  pushback: string;
+  unsupportedAssumption: string;
+  missingNumber: string;
+  methodChallenge: string;
 };
 
 function extractText(data: any) {
@@ -16,89 +22,45 @@ function extractText(data: any) {
   return parts.join('\n').trim();
 }
 
+function fallback(question: string, answer: string): CoachOutput {
+  const lower = answer.toLowerCase();
+  const vague = lower.includes("i'd look into") || lower.includes('i would look into') || lower.includes('figure out') || lower.includes('assess the situation');
+  const hasNumber = /\d/.test(answer);
+  return {
+    pushback: `You gave me a direction, not yet a director-level decision. On “${question},” what is the first observable fact you would use to decide whether your approach is working?`,
+    unsupportedAssumption: 'You are assuming the stated problem is the real driver before showing how you would verify it. Name the source or evidence that would let you make that claim.',
+    missingNumber: hasNumber ? 'You used a number. Now tell me its source, target, comparison period, and what threshold would change your action.' : 'Give me the number you would need before acting: current value, target, timeframe, and source.',
+    methodChallenge: vague ? '“I’d look into it” is not a method. Tell me exactly what report, system, comparison, observation, or person you would use first and what you would do with the result.' : 'State the method: what you would check first, what you would compare it with, who you would involve, and what finding would make you change course.',
+  };
+}
+
 export async function POST(req: NextRequest) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    return NextResponse.json(
-      { error: 'AI coach is not configured. Add OPENAI_API_KEY in your Vercel environment variables.' },
-      { status: 503 },
-    );
+  const body = (await req.json()) as RequestBody;
+  const question = (body.question || '').trim().slice(0, 1200);
+  const answer = (body.answer || '').trim().slice(0, 8000);
+
+  if (!question || !answer) {
+    return NextResponse.json({ error: 'A question and answer are required.' }, { status: 400 });
   }
 
-  const body = (await req.json()) as RequestBody;
-  const missedTopics = (body.missedTopics ?? []).slice(0, 12);
-  const missedQuestions = (body.missedQuestions ?? []).slice(0, 12);
-  const mode = body.mode ?? 'both';
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return NextResponse.json(fallback(question, answer));
 
-  const sourceContext = `
-The learner is preparing for an interview for Director of Operations at an ABA clinic. The public job description emphasizes: day-to-day clinic leadership; sustainable operations; growth strategies and processes; leading a high-performance operations team; client and stakeholder communication; subordinate training; timely documentation; compliance with accrediting/licensing bodies; financial oversight and department budgets; employee/client safety; facility tours; referral-source and family communication; compliance and quality-assurance projects; weekly/monthly/quarterly reporting; crisis intervention with the clinical team; medication-policy adherence; and mitigating missed services.
-
-Operational tools/concepts already taught in this site:
-- Microsoft Teams Shifts represents planned staffing/schedules.
-- ABA Connect represents operational/service-delivery outcomes such as scheduled/rendered services, billable hours, cancellations, appointments, documentation and performance indicators.
-- Immediate recurring event with a known response -> playbook / logic tree.
-- Repeatable required work -> workflow / checklist.
-- Ongoing state that can drift -> tracker / dashboard.
-- Meaningful measurable process/output gap with unknown causes -> DMAIC investigation after immediate containment if needed.
-- Individual performance concerns begin with a performance-management workflow: define the missed expectation, verify evidence, determine clarity/training/ability/barriers, coach or hold accountable as appropriate, set follow-up, and reassess.
-- Operational authority boundaries matter: own operational decisions, collaborate when clinical judgment is involved, and escalate HR/compliance/high-risk or out-of-scope decisions.
-`;
-
-  const prompt = `You are an adaptive interview-prep coach. Create a focused study pack based primarily on the learner's missed material. Do not invent company policies or claim specific authority the public job description does not establish. Keep clinical decisions with clinical leaders. Make questions realistic, director-level, and objectively gradeable from the provided context. Avoid Lean Six Sigma unless a measurable recurring process problem with unknown causes is explicitly part of the question.
-
-Requested mode: ${mode}
-Missed topics: ${missedTopics.length ? missedTopics.join(', ') : 'none yet — use the core role responsibilities'}
-Missed questions: ${JSON.stringify(missedQuestions)}
-
-${sourceContext}
-
-Return 6 flashcards and 6 single-answer multiple-choice questions. At least 4 of the 6 questions should directly remediate the missed topics/questions when misses are supplied. Include concise rationales.`;
+  const systemDirection = `You are a regional executive director interviewing an internal candidate for Director of Operations at a single ABA autism-therapy clinic. The candidate is under-qualified on paper and you already know him. You are not hostile and you do not help him along. Probe for evidence. He has no direct-report management history, no P&L ownership, and no compliance ownership. Do not shame those gaps and do not let him conceal them. When he claims a strength, ask what it cost or what evidence proves it. When he proposes a change, ask what data supports it and what he would stop doing if it failed. When he uses a metric, ask its source, target, and comparison period. Refuse to accept “I'd look into it” without a stated method. Respect operational/clinical scope boundaries and do not invent employer policy. Keep this to one sharp exchange, not a dialogue.`;
 
   const schema = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      focus: { type: 'string' },
-      flashcards: {
-        type: 'array',
-        minItems: 6,
-        maxItems: 6,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            front: { type: 'string' },
-            back: { type: 'string' },
-            topic: { type: 'string' },
-          },
-          required: ['front', 'back', 'topic'],
-        },
-      },
-      quiz: {
-        type: 'array',
-        minItems: 6,
-        maxItems: 6,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            question: { type: 'string' },
-            options: {
-              type: 'array',
-              minItems: 4,
-              maxItems: 4,
-              items: { type: 'string' },
-            },
-            correctIndex: { type: 'integer', minimum: 0, maximum: 3 },
-            rationale: { type: 'string' },
-            topic: { type: 'string' },
-          },
-          required: ['question', 'options', 'correctIndex', 'rationale', 'topic'],
-        },
-      },
+      pushback: { type: 'string' },
+      unsupportedAssumption: { type: 'string' },
+      missingNumber: { type: 'string' },
+      methodChallenge: { type: 'string' },
     },
-    required: ['focus', 'flashcards', 'quiz'],
+    required: ['pushback', 'unsupportedAssumption', 'missingNumber', 'methodChallenge'],
   };
+
+  const prompt = `${systemDirection}\n\nInterview question:\n${question}\n\nCandidate answer:\n${answer}\n\nReturn exactly one tough follow-up rep. Name the weakest unsupported assumption specifically. Ask for the most decision-relevant missing number. Give one method challenge that forces the candidate to say how he would investigate rather than saying he would simply look into it.`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
@@ -114,7 +76,7 @@ Return 6 flashcards and 6 single-answer multiple-choice questions. At least 4 of
         text: {
           format: {
             type: 'json_schema',
-            name: 'doo_study_pack',
+            name: 'doo_interviewer_pushback',
             strict: true,
             schema,
           },
@@ -129,13 +91,9 @@ Return 6 flashcards and 6 single-answer multiple-choice questions. At least 4 of
 
     const data = await response.json();
     const text = extractText(data);
-    if (!text) return NextResponse.json({ error: 'AI coach returned no text.' }, { status: 502 });
-
+    if (!text) return NextResponse.json({ error: 'The interviewer returned no text.' }, { status: 502 });
     return NextResponse.json(JSON.parse(text));
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unexpected AI coach error.' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unexpected interviewer error.' }, { status: 500 });
   }
 }
